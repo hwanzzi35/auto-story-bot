@@ -17,32 +17,37 @@ jobs:
         with:
           python-version: "3.10"
 
-      # 🔧 필요한 라이브러리 설치
+      # 1) 필요한 라이브러리 설치
       - name: Install dependencies
         run: |
           pip install --upgrade pip
           pip install requests feedparser pyyaml
 
-      # 🔑 시크릿(Environment Variables) 생성
-      - name: Create .env from secrets
+      # 2) 시크릿을 '환경변수'로 export (중요!)
+      - name: Export secrets to environment
         run: |
-          echo "YOUTUBE_API_KEY=${{ secrets.YOUTUBE_API_KEY }}" >> .env
-          echo "OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}" >> .env
-          echo "TIMEZONE=Asia/Seoul" >> .env
-          echo "DAYS_WINDOW=14" >> .env
-          echo "MIN_VIEWS=1000000" >> .env
-          echo "SMTP_HOST=${{ secrets.SMTP_HOST }}" >> .env
-          echo "SMTP_PORT=${{ secrets.SMTP_PORT }}" >> .env
-          echo "SMTP_USER=${{ secrets.SMTP_USER }}" >> .env
-          echo "SMTP_PASS=${{ secrets.SMTP_PASS }}" >> .env
-          echo "REPORT_EMAIL_TO=${{ secrets.REPORT_EMAIL_TO }}" >> .env
-          echo "NEWSAPI_KEY=${{ secrets.NEWSAPI_KEY }}" >> .env
+          echo "YOUTUBE_API_KEY=${{ secrets.YOUTUBE_API_KEY }}" >> $GITHUB_ENV
+          echo "OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}" >> $GITHUB_ENV
+          echo "TIMEZONE=Asia/Seoul" >> $GITHUB_ENV
+          echo "DAYS_WINDOW=14" >> $GITHUB_ENV
+          echo "MIN_VIEWS=1000000" >> $GITHUB_ENV
+          echo "SMTP_HOST=${{ secrets.SMTP_HOST }}" >> $GITHUB_ENV
+          echo "SMTP_PORT=${{ secrets.SMTP_PORT }}" >> $GITHUB_ENV
+          echo "SMTP_USER=${{ secrets.SMTP_USER }}" >> $GITHUB_ENV
+          echo "SMTP_PASS=${{ secrets.SMTP_PASS }}" >> $GITHUB_ENV
+          echo "REPORT_EMAIL_TO=${{ secrets.REPORT_EMAIL_TO }}" >> $GITHUB_ENV
+          echo "NEWSAPI_KEY=${{ secrets.NEWSAPI_KEY }}" >> $GITHUB_ENV
+          echo "YT_TOP_DAYS=7" >> $GITHUB_ENV
+          echo "LONGFORM_MIN_SECONDS=180" >> $GITHUB_ENV
+          echo "STRICT_HEALTH=1" >> $GITHUB_ENV
+          echo "STRICT_STORY=1" >> $GITHUB_ENV
+          echo "STRICT_NK=0" >> $GITHUB_ENV
 
-      # 🧠 메인 파이썬 코드 실행
+      # 3) 실행
       - name: Run Daily Auto Story
         run: python main.py
 
-      # 📎 리포트 아티팩트 업로드 (메일로도 발송됨)
+      # 4) 산출물 업로드
       - name: Upload report
         uses: actions/upload-artifact@v4
         with:
