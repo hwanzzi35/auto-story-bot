@@ -13,10 +13,11 @@ from urllib.parse import quote
 # 환경설정
 # -------------------------
 TIMEZONE      = os.getenv("TIMEZONE", "Asia/Seoul")
-DAYS_WINDOW   = int(os.getenv("DAYS_WINDOW", "14"))    # (기존) 트렌딩 섹션 참조
-MIN_VIEWS     = int(os.getenv("MIN_VIEWS", "1000000")) # (기존) 트렌딩 섹션 필터
+DAYS_WINDOW   = int(os.getenv("DAYS_WINDOW", "14"))    # (기존) 스냅샷 섹션 참조
+MIN_VIEWS     = int(os.getenv("MIN_VIEWS", "1000000")) # (기존) 스냅샷 섹션 필터
 NEWS_DAYS     = int(os.getenv("NEWS_DAYS", "10"))      # 뉴스 최근 N일
-YT_TOP_DAYS   = int(os.getenv("YT_TOP_DAYS", "7"))     # ★ 신규: 주제별 Top5 기간(기본 7일)
+YT_TOP_DAYS   = int(os.getenv("YT_TOP_DAYS", "7"))     # 주제별 Top5 기간(기본 7일)
+LONGFORM_MIN_SECONDS = 180                              # ★ 롱폼 하한: 3분
 
 YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
 NEWSAPI_KEY     = os.getenv("NEWSAPI_KEY")   # 선택 (없으면 RSS 사용)
@@ -29,6 +30,44 @@ REPORT_EMAIL_TO = os.getenv("REPORT_EMAIL_TO")
 
 REPORT_PATH = "data/outputs/report.md"
 LOG_DIR     = Path("data/logs")
+
+# -------------------------
+# 사용자 제공 예시(메일 본문에 '참고 스타일'로 노출)
+# -------------------------
+EXAMPLES_NK = [
+    "https://youtu.be/nyxyzqiq6hg?si=iEmALurSivENO1Ak",
+    "https://youtu.be/j6TvIBaJtvk?si=liWm9cZcqTYM--7S",
+    "https://youtu.be/4yMefBgmPDo?si=M4Ct0rGZnkCCmxd0",
+    "https://youtu.be/SXs1eJmlJRM?si=6tP4l6FaNUJagSup",
+    "https://youtu.be/kayKpgPINp8?si=l1JjZge7etyFRcVh",
+]
+EXAMPLES_HEALTH = [
+    "https://youtu.be/pnDaOj6qZzk?si=sv9JADMWGxyxb3q8",
+    "https://youtu.be/9yqcyl_uzKg?si=vDrKvWlhWRiNoaen",
+    "https://youtu.be/R7Kb5-Grbbk?si=hckluLXruAMT3-iV",
+    "https://youtu.be/XKecVRIdEOE?si=AEyCbj7HmZj9oq5i",
+    "https://youtu.be/FseG8J62eII?si=Ha4zJSNf5gqDrdEn",
+    "https://youtu.be/OntC4H67VWM?si=JMCMtuEe6CkJmdI0",
+    "https://youtu.be/YYwS4Fx9XxU?si=t4uiHEVefcK-xX6Y",
+    "https://youtu.be/30sIvCY0ul4?si=GJGiUVtKsFl-rQRG",
+    "https://youtu.be/op_d99AJnz4?si=yJ7Nuqi74ERJvvoy",
+    "https://youtu.be/5-R3Qjoqg0s?si=-NuKvzl7bME1LZ58",
+    "https://youtu.be/mRa2MEuirpk?si=E9h4QATtSsch6VT3",
+]
+EXAMPLES_STORY = [
+    "https://youtu.be/3p0J0_V4seA?si=NXrZryBy1zQi62Qv",
+    "https://youtu.be/BzD9ZgX7b0M?si=RfeDPJscVlI4bIP5",
+    "https://youtu.be/Ze9t7VAfEc8?si=H1RfCU6C2jtZ7m4u",
+    "https://youtu.be/L3WCz-2kUHg?si=VDl7Z-_BsUt7ZZ47",
+    "https://youtu.be/CpBD7dYgkJk?si=zP5wkgRZmr2D7lX8",
+    "https://youtu.be/lrg7p6crYvY?si=65kQEBZwm2cMYgzg",
+    "https://youtu.be/dO9RLPETiMQ?si=q91sxJqgInpRA_Xu",
+    "https://youtu.be/snU_B3F1WxE?si=JiZqUXFCTO8LThYm",
+    "https://youtu.be/uOjNsbFvMD0?si=SD4GJ8YJbTzU5gxV",
+    "https://youtu.be/Y_3RRkwy4Wc?si=5YBGWHotJ5pQuIcF",
+    "https://youtu.be/6PtqKq8M9lk?si=g4NM-Npnz91Y1yTp",
+    "https://youtu.be/9zFsgf-kA2U?si=woD7D8TrjWbG5tBh",
+]
 
 # -------------------------
 # 공통 유틸
@@ -80,15 +119,32 @@ def within_days_utc(iso_s: str, days: int) -> bool:
         return False
 
 # -------------------------
-# 유튜브 API helpers (공용)
+# YouTube API helpers
 # -------------------------
+def parse_iso8601_duration(dur: str) -> int:
+    """
+    ISO8601 duration (e.g., PT15M33S) -> seconds
+    """
+    if not dur or not dur.startswith("PT"):
+        return 0
+    hours = minutes = seconds = 0
+    m = re.findall(r'(\d+H|\d+M|\d+S)', dur)
+    for part in m:
+        if part.endswith('H'):
+            hours = int(part[:-1])
+        elif part.endswith('M'):
+            minutes = int(part[:-1])
+        elif part.endswith('S'):
+            seconds = int(part[:-1])
+    return hours*3600 + minutes*60 + seconds
+
 def youtube_videos_details(video_ids):
-    """videos.list로 snippet,statistics 조회"""
+    """videos.list로 snippet, statistics, contentDetails 조회 (길이 필터용)"""
     if not video_ids: return []
     url = "https://www.googleapis.com/youtube/v3/videos"
     params = {
         "key": YOUTUBE_API_KEY,
-        "part": "snippet,statistics",
+        "part": "snippet,statistics,contentDetails",
         "id": ",".join(video_ids[:50])
     }
     r = requests.get(url, params=params, timeout=30)
@@ -97,7 +153,7 @@ def youtube_videos_details(video_ids):
 
 def youtube_search_recent_by_views(query: str, days: int, max_results=50):
     """
-    최근 N일 내 검색어로 검색 → 조회수순 상위 영상 상세조회 → 리스트 반환
+    최근 N일 내 검색어로 검색 → 조회수순 상위 영상 상세조회 → 롱폼 필터 → 리스트 반환
     """
     log(f"[YT] search recent by views: '{query}', {days}일")
     published_after = (datetime.utcnow() - timedelta(days=days)).replace(tzinfo=timezone.utc).isoformat()
@@ -111,6 +167,7 @@ def youtube_search_recent_by_views(query: str, days: int, max_results=50):
         "publishedAfter": published_after,
         "maxResults": max_results,
         "relevanceLanguage": "ko",
+        # videoDuration는 any로 두고, 상세 조회 후 durationSec으로 필터
     }
     r = requests.get(url, params=params, timeout=30)
     r.raise_for_status()
@@ -119,35 +176,38 @@ def youtube_search_recent_by_views(query: str, days: int, max_results=50):
     if not ids: return []
 
     details = youtube_videos_details(ids)
-    dmap = {d["id"]: d for d in details}
-
     merged = []
-    for it in items:
-        vid = it["id"]["videoId"]
-        sn  = it.get("snippet", {})
-        d   = dmap.get(vid)
-        if not d: continue
-        views = parse_int((d.get("statistics") or {}).get("viewCount"))
+    for d in details:
+        sn = d.get("snippet", {}) or {}
+        st = d.get("statistics", {}) or {}
+        cd = d.get("contentDetails", {}) or {}
+        if sn.get("liveBroadcastContent") and sn.get("liveBroadcastContent") != "none":
+            continue  # 라이브 제외
+        duration_sec = parse_iso8601_duration(cd.get("duration"))
+        if duration_sec < LONGFORM_MIN_SECONDS:
+            continue  # ★ 3분 미만 제외(숏폼/쇼츠 차단)
+        vid = d.get("id")
         merged.append({
             "id": vid,
             "title": sn.get("title"),
             "channel": sn.get("channelTitle"),
             "publishedAt": sn.get("publishedAt"),
-            "views": views,
-            "desc": sn.get("description","")
+            "views": parse_int(st.get("viewCount")),
+            "desc": sn.get("description",""),
+            "durationSec": duration_sec
         })
     merged.sort(key=lambda x: x["views"], reverse=True)
     return merged
 
 # -------------------------
-# (기존) 유튜브 트렌딩 mostPopular (참고용)
+# (참고) mostPopular 스냅샷
 # -------------------------
 def fetch_youtube_trending_kr(max_results=50):
     log("유튜브 트렌딩 조회 시작")
     url = "https://www.googleapis.com/youtube/v3/videos"
     params = {
         "key": YOUTUBE_API_KEY,
-        "part": "snippet,statistics",
+        "part": "snippet,statistics,contentDetails",
         "chart": "mostPopular",
         "regionCode": "KR",
         "maxResults": max_results,
@@ -176,9 +236,13 @@ def label_topic(title: str, desc: str) -> str:
 def pick_youtube_recos(items):
     filtered = []
     for it in items:
-        sn = it.get("snippet", {})
-        st = it.get("statistics", {})
+        sn = it.get("snippet", {}) or {}
+        st = it.get("statistics", {}) or {}
+        cd = it.get("contentDetails", {}) or {}
         views = parse_int(st.get("viewCount"))
+        duration_sec = parse_iso8601_duration(cd.get("duration"))
+        if duration_sec < LONGFORM_MIN_SECONDS:  # 롱폼만
+            continue
         if views < MIN_VIEWS:
             continue
         if not within_days_utc(sn.get("publishedAt",""), DAYS_WINDOW):
@@ -191,6 +255,7 @@ def pick_youtube_recos(items):
             "publishedAt": sn.get("publishedAt"),
             "views": views,
             "topic": topic,
+            "durationSec": duration_sec
         })
     by_topic = {}
     for v in sorted(filtered, key=lambda x: x["views"], reverse=True):
@@ -207,7 +272,7 @@ def pick_youtube_recos(items):
     today = next((v for v in top3 if v["topic"] == "시니어 건강"), None)
     if not today and top3: today = max(top3, key=lambda x: x["views"])
 
-    log(f"유튜브 추천 선정: {len(top3)}개 / 오늘추천: {today['title'] if today else '없음'}")
+    log(f"유튜브 추천 선정(롱폼): {len(top3)}개 / 오늘추천: {today['title'] if today else '없음'}")
     return top3, today
 
 # -------------------------
@@ -268,8 +333,10 @@ def fetch_news_topics():
     for ch, q in topics.items():
         if NEWSAPI_KEY:
             items = newsapi_search(q, NEWS_DAYS)
+            source_note = "데이터 출처: NewsAPI(인기순)"
         else:
             items = google_news_rss_search(q, NEWS_DAYS)
+            source_note = "데이터 출처: Google News RSS (NEWSAPI 미사용)"
         seen = set()
         uniq = []
         for it in items:
@@ -277,12 +344,12 @@ def fetch_news_topics():
             if not t or t in seen: continue
             seen.add(t)
             uniq.append(it)
-        out[ch] = uniq[:3]
-        log(f"뉴스 '{ch}' 추출: {len(out[ch])}개")
+        out[ch] = {"items": uniq[:3], "source_note": source_note}
+        log(f"뉴스 '{ch}' 추출: {len(out[ch]['items'])}개")
     return out
 
 # -------------------------
-# 신규: 주제별(건강/북한/인생스토리) 유튜브 Top5 (최근 7일)
+# 주제별(건강/북한/인생스토리) 유튜브 Top5 (최근 7일/롱폼만)
 # -------------------------
 YT_QUERIES = {
     "시니어 건강": "건강 OR 혈당 OR 당뇨 OR 콜레스테롤 OR 무릎 OR 허리 OR 치매 OR 관절 OR 한방",
@@ -295,16 +362,15 @@ def fetch_topic_top5():
     for topic, q in YT_QUERIES.items():
         items = youtube_search_recent_by_views(q, YT_TOP_DAYS, max_results=50)
         out[topic] = items[:5]
-        log(f"[YT Top5] {topic}: {len(out[topic])}개")
+        log(f"[YT Top5 롱폼] {topic}: {len(out[topic])}개")
     return out
 
 # -------------------------
-# 오리지널 아이디어 생성기 (룰베이스)
+# 오리지널 아이디어 생성 (카테고리별)
 # -------------------------
 STOPWORDS = set(["영상","뉴스","속보","라이브","LIVE","풀영상","핫이슈","브이로그","모음","하이라이트","클립"])
 
 def extract_keywords(titles):
-    # 아주 단순화된 키워드 추출: 특수문자 제거 → 띄어쓰기 → 2글자 이상 & 불용어 제외
     counts = {}
     for t in titles:
         if not t: continue
@@ -316,69 +382,73 @@ def extract_keywords(titles):
             counts[tok] = counts.get(tok, 0) + 1
     return sorted(counts.items(), key=lambda x: x[1], reverse=True)
 
-def make_original_idea(topic_top5, news_map):
-    # 모든 Top5 제목/뉴스 제목에서 키워드 모으기
-    all_titles = []
-    for lst in topic_top5.values():
-        for v in lst:
-            all_titles.append(v["title"])
-    for ch, items in news_map.items():
-        for it in items:
-            all_titles.append(it["title"])
-    kw = extract_keywords(all_titles)
+def propose_for_category(category: str, items: list[dict]):
+    titles = [v["title"] for v in items]
+    kw = extract_keywords(titles)
     top_words = [w for (w,c) in kw[:6]]
-
-    # 간단한 테마 결정: 건강/북한/인생 중 어디가 강한지
-    sizes = {k: len(v) for k, v in topic_top5.items()}
-    dominant = max(sizes, key=sizes.get) if sizes else "시니어 건강"
-
-    # 템플릿 조합
-    if dominant == "시니어 건강":
-        title = f"{top_words[0] if top_words else '건강'} 진짜 몰랐던 {top_words[1] if len(top_words)>1 else '비밀'} | 병원 안 가고도 달라지는 3가지"
-        thumb = f"{top_words[0] if top_words else '건강'} 충격 팩트!"
+    if category == "시니어 건강":
+        title = f"{top_words[0] if top_words else '건강'} 진짜 바꾸는 7일 루틴 | 병원 안 가고 체감되는 변화 3가지"
+        thumb = "7일만 따라해보세요"
         synopsis = [
-            "40~70대 시청자 관점에서 ‘오늘 당장 실천 가능한’ 팁 3가지",
-            "의학 논란/오해를 쉬운 비유로 정리(광고·과장 주의)",
-            "실패/성공 후기 1~2개를 삽입해 현실감 부여",
-            "주의사항·금기사항을 카드형 그래픽으로 정리",
+            "근거 중심 팁 3가지(식단/활동/수면) — 과장 금지",
+            "주의·금기 항목을 카드형으로 정리",
+            "시청자 체크리스트(PDF 링크 가능) 제안",
+            "사례 1~2개로 현실감 보강",
         ]
-    elif dominant == "시니어 북한":
-        title = f"최근 {top_words[0] if top_words else '북한'} 동향, 우리가 놓친 핵심 3포인트 (한눈 요약)"
+        keyword = top_words[:3] or ["건강","루틴","체크리스트"]
+    elif category == "시니어 북한":
+        title = f"최근 {top_words[0] if top_words else '북한'} 동향 핵심 브리핑 | 한국 시니어가 꼭 알아야 할 3포인트"
         thumb = "핵심 3포인트"
         synopsis = [
-            "지난 1주 키워드 타임라인(지도/사진 없이도 이해되게)",
-            "한국 시니어 시청자에게 직접 영향 갈 수 있는 경제·안보 포인트",
-            "국내 보도와 해외 보도 시각 차이 1가지 비교",
-            "과열/공포 조장 금지: 팩트 체크 표기",
+            "지난 1주 주요 사건 타임라인 정리",
+            "국내외 시각 비교(국내 보도 vs 해외 싱크탱크)",
+            "생활/경제에 미칠 영향 포인트",
+            "팩트체크 출처 병기(스크린샷/링크)",
         ]
+        keyword = top_words[:3] or ["북한","동향","영향"]
     else:  # 시니어 인생스토리
-        title = f"며느리 한마디에 뒤집힌 {top_words[0] if top_words else '가족'} 모임, 반전의 결말"
+        title = f"며느리 한마디에 뒤집힌 {top_words[0] if top_words else '가족'} 모임, 끝은 반전이었다"
         thumb = "반전 실화"
         synopsis = [
-            "실제 사연 포맷(도입-갈등-전환-결말) 4막 구성",
-            "시니어 공감 포인트(효·재산·건강·관계) 명확히",
-            "시청자 참여 유도: ‘내 이야기’ 댓글 질문 2개",
-            "과도한 자극·비방 회피(정서적 카타르시스 중심)",
+            "도입-갈등-전환-결말 4막 구성",
+            "시니어 공감 키워드(효·재산·건강·관계)",
+            "시청자 참여 질문 2개 삽입",
+            "자극·비방 회피, 감정선 중심",
         ]
+        keyword = top_words[:3] or ["가족","반전","갈등"]
+    return {"category": category, "title": title, "thumb": thumb, "synopsis": synopsis, "keywords": keyword}
 
-    return {"title": title, "thumb": thumb, "synopsis": synopsis, "dominant": dominant, "keywords": top_words}
+# -------------------------
+# 북한 주제 자료 리소스 추천(정적 권장 리스트)
+# -------------------------
+def nk_research_resources():
+    return [
+        "- 통일부/국방부 공식 브리핑(보도자료)",
+        "- 외교부/청와대 국가안보실 공개자료",
+        "- 유엔 안보리 문서/제재위 보고서",
+        "- 미국 국무부/국방부 발표, 의회조사국(CRS) 보고서",
+        "- 싱크탱크: 38 North, CSIS, RAND, Brookings",
+        "- 국제/해외 언론: VOA, RFA, BBC, NHK 등",
+        "- 衛星/OSINT: 위성사진 분석(상용 이미지 서비스 인용), OSINT 연구자 블로그",
+        "- 학술데이터: KCI/DBpia의 북한·안보 관련 논문(배경설명용)",
+    ]
 
 # -------------------------
 # 리포트 작성
 # -------------------------
-def build_report_md(youtube_top3, youtube_today, news_map, topic_top5, original_idea):
+def build_report_md(youtube_top3, youtube_today, news_map, topic_top5, per_category_ideas):
     kst_now = now_kst().strftime("%Y-%m-%d %H:%M (KST)")
     lines = [
         f"# Daily Auto Story — {kst_now}",
         "",
-        "매일 오전 8시에 자동 발송되는 요약 리포트입니다.",
+        "매일 오전 8시 자동 발송 리포트입니다. **롱폼(3분 이상)만** 선별해 제공합니다.",
         "",
     ]
 
-    # ★ 신규 섹션: 주제별 유튜브 Top5 (최근 7일)
+    # A) 주제별 유튜브 Top 5 (롱폼/최근 7일)
     lines += [
-        "## A) 주제별 유튜브 Top 5 (최근 {d}일)".format(d=YT_TOP_DAYS),
-        "시니어 타깃 3개 채널(건강/북한/인생스토리) 기준으로 최근 7일 조회수 상위 영상을 모았습니다.",
+        "## A) 주제별 유튜브 Top 5 (최근 {d}일 · 롱폼만)".format(d=YT_TOP_DAYS),
+        "시니어 타깃 3개 채널(건강/북한/인생스토리) 기준으로 최근 7일 조회수 상위 **롱폼** 영상을 모았습니다.",
         ""
     ]
     for ch in ["시니어 건강", "시니어 북한", "시니어 인생스토리"]:
@@ -391,64 +461,57 @@ def build_report_md(youtube_top3, youtube_today, news_map, topic_top5, original_
         for i, v in enumerate(items, 1):
             url = f"https://www.youtube.com/watch?v={v['id']}"
             when = (v.get("publishedAt","") or "").replace("T"," ").replace("Z"," UTC")
+            mm = v.get("durationSec",0)//60
+            ss = v.get("durationSec",0)%60
             lines.append(f"{i}. **[{v['title']}]({url})**")
-            lines.append(f"   - 채널: {v['channel']} · 조회수: {v['views']:,} · 업로드: {when}")
+            lines.append(f"   - 채널: {v['channel']} · 조회수: {v['views']:,} · 길이: {mm}:{ss:02d} · 업로드: {when}")
         lines.append("")
 
-    # ★ 오리지널 제작 제안
-    idea = original_idea
-    lines += [
-        "## B) 오늘 제작 추천 (오리지널 제안)",
-        f"- **메인 주제:** {idea['dominant']}",
-        f"- **제목 제안:** {idea['title']}",
-        f"- **썸네일 문구(짧게):** {idea['thumb']}",
-        "- **시놉시스:**",
-    ]
-    for s in idea["synopsis"]:
-        lines.append(f"  - {s}")
-    if idea["keywords"]:
-        lines += [f"- 참고 키워드: {', '.join(idea['keywords'])}", ""]
-    else:
+    # B) 오늘 제작 추천(카테고리별 오리지널 제안)
+    lines += ["## B) 오늘 제작 추천 (카테고리별 오리지널 제안)",]
+    for idea in per_category_ideas:
+        lines += [
+            f"### {idea['category']}",
+            f"- **추천 키워드:** {', '.join(idea['keywords'])}",
+            f"- **제목 제안:** {idea['title']}",
+            f"- **썸네일 문구:** {idea['thumb']}",
+            "- **시놉시스:**",
+        ]
+        for s in idea["synopsis"]:
+            lines.append(f"  - {s}")
         lines.append("")
 
-    # (기존) 간단 트렌딩 3개 & 오늘 추천(참고용) — 유지
+    # C) 스냅샷(롱폼)
     lines += [
-        "## C) 유튜브 트렌드 스냅샷 (최근 {d}일 · 조회수 ≥ {v:,})".format(d=DAYS_WINDOW, v=MIN_VIEWS),
+        "## C) 유튜브 트렌드 스냅샷 (최근 {d}일 · 조회수 ≥ {v:,} · 롱폼만)".format(d=DAYS_WINDOW, v=MIN_VIEWS),
     ]
     if youtube_top3:
         for i, v in enumerate(youtube_top3, 1):
             url = f"https://www.youtube.com/watch?v={v['id']}"
             when = v["publishedAt"].replace("T"," ").replace("Z"," UTC")
+            mm = v.get("durationSec",0)//60
+            ss = v.get("durationSec",0)%60
             lines += [
                 f"{i}. **[{v['title']}]({url})**",
-                f"   - 채널: {v['channel']} · 주제: {v['topic']} · 조회수: {v['views']:,} · 업로드: {when}",
+                f"   - 채널: {v['channel']} · 주제: {label_topic(v['title'], '')} · 조회수: {v['views']:,} · 길이: {mm}:{ss:02d} · 업로드: {when}",
                 ""
             ]
     else:
         lines.append("- (조건에 맞는 항목 없음)")
         lines.append("")
 
-    if youtube_today:
-        lines += [
-            "### 참고: 트렌딩 기반 오늘의 추천(자동)",
-            f"- **주제:** “{youtube_today['title']}”",
-            f"- **원본:** https://www.youtube.com/watch?v={youtube_today['id']}",
-            ""
-        ]
-
-    # 뉴스/방송 트렌드
-    source_note = "데이터 출처: Google News RSS (NEWSAPI 미사용)"
-    if os.getenv("NEWSAPI_KEY"):
-        source_note = "데이터 출처: NewsAPI(인기순)"
+    # D) 웹/방송 트렌드 + 출처
     lines += [
         "## D) 웹/방송 트렌드 (최근 {d}일)".format(d=NEWS_DAYS),
-        source_note,
         "뉴스·방송·포털 기사 기반으로 시니어 타깃에 적합한 주제입니다.",
         ""
     ]
     for ch in ["시니어 건강", "시니어 북한"]:
+        info = news_map.get(ch, {}) or {}
+        items = info.get("items", [])
+        source_note = info.get("source_note", "")
         lines.append(f"### {ch} 추천 3개")
-        items = news_map.get(ch, [])
+        if source_note: lines.append(f"- {source_note}")
         if not items:
             lines.append("- (결과 없음)")
             lines.append("")
@@ -457,6 +520,27 @@ def build_report_md(youtube_top3, youtube_today, news_map, topic_top5, original_
             src = f" · 출처: {it['source']}" if it.get("source") else ""
             lines.append(f"{i}. **[{it['title']}]({it['url']})**{src}")
         lines.append("")
+
+    # E) 참고 스타일(사용자 제공 예시 링크)
+    lines += [
+        "## E) 참고 스타일 (사용자 제공 예시 링크)",
+        "실제 제작 톤/구성 참고용입니다.",
+        "",
+        "### 북한 관련",
+    ] + [f"- {u}" for u in EXAMPLES_NK] + [
+        "",
+        "### 시니어 건강",
+    ] + [f"- {u}" for u in EXAMPLES_HEALTH] + [
+        "",
+        "### 시니어 인생스토리",
+    ] + [f"- {u}" for u in EXAMPLES_STORY] + [""]
+
+    # F) 북한 주제: 신뢰 가능한 자료 리소스(권장)
+    lines += [
+        "## F) 북한 주제 리서치 자료 추천",
+        "영상 제작 시 팩트체크/배경설명에 권장되는 출처입니다.",
+    ] + nk_research_resources() + [""]
+
     return "\n".join(lines)
 
 # -------------------------
@@ -467,27 +551,27 @@ def main():
     if not YOUTUBE_API_KEY:
         raise EnvironmentError("YOUTUBE_API_KEY 없음 (Secrets에 추가 필요)")
 
-    # 1) 주제별(건강/북한/인생스토리) Top5 (최근 7일)
+    # 1) 주제별 Top5 (최근 7일/롱폼만)
     topic_top5 = fetch_topic_top5()
 
-    # 2) 뉴스/방송
+    # 2) 카테고리별 오리지널 아이디어
+    per_category_ideas = []
+    for cat in ["시니어 건강", "시니어 북한", "시니어 인생스토리"]:
+        per_category_ideas.append(propose_for_category(cat, topic_top5.get(cat, [])))
+
+    # 3) 뉴스/방송
     news_map = fetch_news_topics()
 
-    # 3) 오리지널 아이디어 생성
-    original_idea = make_original_idea(topic_top5, news_map)
-
-    # 4) (참고) mostPopular 트렌딩 3개
+    # 4) 스냅샷(롱폼 필터 적용)
     yt_items = fetch_youtube_trending_kr()
     yt_top3, yt_today = pick_youtube_recos(yt_items)
 
     # 5) 리포트 작성/저장/메일
-    md = build_report_md(yt_top3, yt_today, news_map, topic_top5, original_idea)
+    md = build_report_md(yt_top3, yt_today, news_map, topic_top5, per_category_ideas)
     Path(REPORT_PATH).write_text(md, encoding="utf-8")
-    log(f"리포트 저장: {REPORT_PATH}")
 
-    subject = "✅ Daily Auto Story: 주제별 유튜브 Top5 + 오리지널 오늘의 주제 + 웹/방송"
+    subject = "✅ Daily Auto Story: 롱폼 Top5(건강/북한/인생)+오늘제작추천+웹/방송"
     send_email_markdown(md, subject)
-    log("메일 발송 완료")
 
 if __name__ == "__main__":
     main()
