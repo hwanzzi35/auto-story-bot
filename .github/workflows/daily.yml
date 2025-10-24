@@ -2,6 +2,8 @@ name: Daily Auto Story
 
 on:
   workflow_dispatch:
+  push:
+    branches: [ main ]
   schedule:
     - cron: "0 23 * * *"  # 매일 KST 08:00 (UTC 23:00 전날)
 
@@ -15,33 +17,34 @@ jobs:
         with:
           python-version: "3.10"
 
-      - name: Install dependencies (daily)
+      # 🔧 필요한 라이브러리 설치
+      - name: Install dependencies
         run: |
-          python -m pip install --upgrade pip
-          pip install requests
-          pip install feedparser
+          pip install --upgrade pip
+          pip install requests feedparser pyyaml
 
-      - name: Run Daily Report
+      # 🔑 시크릿(Environment Variables) 생성
+      - name: Create .env from secrets
+        run: |
+          echo "YOUTUBE_API_KEY=${{ secrets.YOUTUBE_API_KEY }}" >> .env
+          echo "OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}" >> .env
+          echo "TIMEZONE=Asia/Seoul" >> .env
+          echo "DAYS_WINDOW=14" >> .env
+          echo "MIN_VIEWS=1000000" >> .env
+          echo "SMTP_HOST=${{ secrets.SMTP_HOST }}" >> .env
+          echo "SMTP_PORT=${{ secrets.SMTP_PORT }}" >> .env
+          echo "SMTP_USER=${{ secrets.SMTP_USER }}" >> .env
+          echo "SMTP_PASS=${{ secrets.SMTP_PASS }}" >> .env
+          echo "REPORT_EMAIL_TO=${{ secrets.REPORT_EMAIL_TO }}" >> .env
+          echo "NEWSAPI_KEY=${{ secrets.NEWSAPI_KEY }}" >> .env
+
+      # 🧠 메인 파이썬 코드 실행
+      - name: Run Daily Auto Story
         run: python main.py
-        env:
-          # === Required ===
-          YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
-          SMTP_HOST:       ${{ secrets.SMTP_HOST }}
-          SMTP_PORT:       ${{ secrets.SMTP_PORT }}
-          SMTP_USER:       ${{ secrets.SMTP_USER }}
-          SMTP_PASS:       ${{ secrets.SMTP_PASS }}
-          REPORT_EMAIL_TO: ${{ secrets.REPORT_EMAIL_TO }}
 
-          # === Optional (없어도 동작) ===
-          NEWSAPI_KEY:     ${{ secrets.NEWSAPI_KEY }}
-          TIMEZONE:        "Asia/Seoul"
-          DAYS_WINDOW:     "14"        # 최근 N일(유튜브)
-          MIN_VIEWS:       "1000000"   # 100만 이상
-          NEWS_DAYS:       "10"        # 뉴스 최근 N일
-
-      - uses: actions/upload-artifact@v4
+      # 📎 리포트 아티팩트 업로드 (메일로도 발송됨)
+      - name: Upload report
+        uses: actions/upload-artifact@v4
         with:
-          name: daily-report-and-logs
-          path: |
-            data/outputs/report.md
-            data/logs/*.log
+          name: report
+          path: data/outputs/report.md
