@@ -2,6 +2,10 @@ import os
 import smtplib
 from email.mime.text import MIMEText
 from email.header import Header
+from email.mime.multipart import MIMEMultipart
+from email.mime.base import MIMEBase
+from email import encoders
+
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import csv
@@ -22,11 +26,28 @@ PDF_PATH  = OUT_DIR / "monthly_report.pdf"
 def now_kst():
     return datetime.now(timezone(timedelta(hours=9)))
 
-def send_email_markdown(body: str, subject: str):
-    msg = MIMEText(body, _charset="utf-8")
+def send_email_with_pdf(subject: str, body_text: str, pdf_path: Path):
+    if not (SMTP_HOST and SMTP_PORT and SMTP_USER and SMTP_PASS and REPORT_EMAIL_TO):
+        raise EnvironmentError("SMTP 환경변수가 누락되었습니다.")
+    if not pdf_path.exists():
+        raise FileNotFoundError(f"첨부할 PDF가 없습니다: {pdf_path}")
+
+    msg = MIMEMultipart()
     msg["Subject"] = Header(subject, "utf-8")
     msg["From"] = SMTP_USER
-    msg["To"]   = REPORT_EMAIL_TO
+    msg["To"] = REPORT_EMAIL_TO
+
+    # 본문
+    msg.attach(MIMEText(body_text, _charset="utf-8"))
+
+    # 첨부
+    with pdf_path.open("rb") as f:
+        part = MIMEBase("application", "pdf")
+        part.set_payload(f.read())
+    encoders.encode_base64(part)
+    part.add_header("Content-Disposition", f'attachment; filename="{pdf_path.name}"')
+    msg.attach(part)
+
     with smtplib.SMTP(SMTP_HOST, int(SMTP_PORT)) as s:
         s.starttls()
         s.login(SMTP_USER, SMTP_PASS)
@@ -82,30 +103,34 @@ def build_pdf():
         rising_all+= read_csv_rows(wk / "weekly_rising_keywords.csv")
         comp_all  += read_csv_rows(wk / "weekly_archetype_competition.csv")
 
-    # 표지를 간단 텍스트로
+    # 표지
     line(f"Monthly Senior Trends — {now_kst().strftime('%Y-%m-%d %H:%M (KST)')}", size=14, bold=True, gap=20)
     line("최근 4주(28일) 집계 · 주간 리포트 CSV 합산 요약", gap=24)
 
-    # 1) 신규 유망 주제(주간 예시들을 주제명 기준 Top hits)
+    # 1) 신규 유망 주제(합산)
     line("1) 신규 유망 주제 (4주 합산) — 예시 상위 8개", bold=True, gap=18)
     topic_counter = {}
     for r in topics_all:
-        t = r.get("topic","").strip()
-        if t: topic_counter[t] = topic_counter.get(t, 0) + 1
+        t = (r.get("topic") or "").strip()
+        if t:
+            topic_counter[t] = topic_counter.get(t, 0) + 1
     for i, (t, cnt) in enumerate(sorted(topic_counter.items(), key=lambda x: x[1], reverse=True)[:8], 1):
         line(f"{i}. {t} · {cnt}회 등장")
 
-    # 2) Top5 영상 누적에서 상위 뷰수 5개 (중복 허용)
+    # 2) 누적 Top 영상 5
     line("", gap=10)
     line("2) 누적 Top 영상 (상위 5)", bold=True, gap=18)
+    def to_int(x):
+        try: return int(x)
+        except: return 0
     top5_all_sorted = sorted(
-        [{"title": r.get("title",""), "url": r.get("url",""), "views": int((r.get("views") or 0) or 0)} for r in top5_all],
+        [{"title": r.get("title",""), "url": r.get("url",""), "views": to_int(r.get("views"))} for r in top5_all],
         key=lambda x: x["views"], reverse=True
     )[:5]
     for i, r in enumerate(top5_all_sorted, 1):
         line(f"{i}. {r['title']} · 조회수 {r['views']:,}")
 
-    # 3) 급상승 키워드 — 등장 delta/percent 기반 상위 5
+    # 3) 급상승 키워드 Top 5
     line("", gap=10)
     line("3) 급상승 키워드 (4주 합산 상위 5)", bold=True, gap=18)
     def parse_float(x):
@@ -113,7 +138,7 @@ def build_pdf():
         except: return None
     rising_scored = []
     for r in rising_all:
-        delta = int((r.get("delta") or 0) or 0)
+        delta = to_int(r.get("delta"))
         pct = parse_float(r.get("change_pct"))
         score = (delta * 10) + (pct if pct is not None else 50)  # 간단 가중 점수
         rising_scored.append((r.get("keyword",""), score))
@@ -123,17 +148,17 @@ def build_pdf():
     for i, (k, s) in enumerate(sorted(summarised.items(), key=lambda x: x[1], reverse=True)[:5], 1):
         line(f"{i}. {k} (점수 {int(s)})")
 
-    # 4) 경쟁도 — 아키타입별 평균 진입률 상위/하위 3
+    # 4) 경쟁도 — 아키타입 평균 진입률 상/하위 3
     line("", gap=10)
     line("4) 카테고리 경쟁도 (상위/하위)", bold=True, gap=18)
     comp_agg = {}
     for r in comp_all:
         t = r.get("archetype","")
-        uploads = int((r.get("uploads") or 0) or 0)
-        top_hits = int((r.get("top_hits") or 0) or 0)
+        up = to_int(r.get("uploads"))
+        th = to_int(r.get("top_hits"))
         if t:
-            up, th = comp_agg.get(t, (0,0))
-            comp_agg[t] = (up+uploads, th+top_hits)
+            u0, t0 = comp_agg.get(t, (0,0))
+            comp_agg[t] = (u0+up, t0+th)
     ratios = []
     for t, (up, th) in comp_agg.items():
         ratio = (th / up) if up else 0
@@ -149,10 +174,13 @@ def build_pdf():
     c.save()
 
 def main():
+    # PDF 생성
     build_pdf()
-    subject = "📊 Monthly Senior Trends — 4주 합산 PDF"
-    body = "월간 종합 PDF를 첨부 아티팩트로 업로드했습니다.\nActions > monthly-pdf 아티팩트에서 다운로드하세요."
-    send_email_markdown(body, subject)
+
+    # 이메일로 PDF 첨부 발송
+    subject = "📊 Monthly Senior Trends — 4주 합산 PDF (첨부)"
+    body = "월간 종합 PDF를 첨부했습니다.\n(아티팩트에서도 다운로드 가능: Actions > monthly-pdf)"
+    send_email_with_pdf(subject, body, PDF_PATH)
 
 if __name__ == "__main__":
     main()
