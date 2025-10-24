@@ -2,27 +2,46 @@ name: Daily Auto Story
 
 on:
   workflow_dispatch:
+  push:
+    branches: [ main ]
   schedule:
-    - cron: "0 23 * * *"  # KST 08:00
+    - cron: "0 23 * * *"  # 매일 KST 08:00 (UTC 23:00 전날)
 
 jobs:
   run:
     runs-on: ubuntu-latest
-    env:
-      SMTP_HOST: ${{ secrets.SMTP_HOST }}
-      SMTP_PORT: ${{ secrets.SMTP_PORT }}
-      SMTP_USER: ${{ secrets.SMTP_USER }}
-      SMTP_PASS: ${{ secrets.SMTP_PASS }}
-      REPORT_EMAIL_TO: ${{ secrets.REPORT_EMAIL_TO }}
-      YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
-      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-      TIMEZONE: Asia/Seoul
-      DAYS_WINDOW: 14
-      MIN_VIEWS: 1000000
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.10"
+
       - run: pip install -r requirements.txt
-      - run: python main.py
+
+      - name: Run Python
+        run: python main.py
+        env:
+          # 일반 파라미터
+          TIMEZONE: "Asia/Seoul"
+          DAYS_WINDOW: "14"        # 유튜브 최근 N일
+          MIN_VIEWS: "1000000"     # 유튜브 최소 조회수
+          NEWS_DAYS: "10"          # 웹 뉴스 최근 N일
+
+          # API / 메일 환경변수 (Secrets에서 가져옴)
+          YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
+          # 선택) NewsAPI를 쓰고 싶으면 Secrets에 추가 (없으면 Google News RSS로 자동 대체)
+          NEWSAPI_KEY:   ${{ secrets.NEWSAPI_KEY }}
+
+          SMTP_HOST:       ${{ secrets.SMTP_HOST }}
+          SMTP_PORT:       ${{ secrets.SMTP_PORT }}
+          SMTP_USER:       ${{ secrets.SMTP_USER }}
+          SMTP_PASS:       ${{ secrets.SMTP_PASS }}
+          REPORT_EMAIL_TO: ${{ secrets.REPORT_EMAIL_TO }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: report-and-logs
+          path: |
+            data/outputs/report.md
+            data/logs/
