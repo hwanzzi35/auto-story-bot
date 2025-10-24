@@ -2,34 +2,27 @@ name: Daily Auto Story
 
 on:
   workflow_dispatch:
-  push:
-    branches: [ main ]
   schedule:
-    - cron: "0 23 * * *"  # 매일 KST 08:00 (UTC 23:00 전날)
+    - cron: "0 23 * * *"  # KST 08:00
 
 jobs:
   run:
     runs-on: ubuntu-latest
+    env:
+      SMTP_HOST: ${{ secrets.SMTP_HOST }}
+      SMTP_PORT: ${{ secrets.SMTP_PORT }}
+      SMTP_USER: ${{ secrets.SMTP_USER }}
+      SMTP_PASS: ${{ secrets.SMTP_PASS }}
+      REPORT_EMAIL_TO: ${{ secrets.REPORT_EMAIL_TO }}
+      YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      TIMEZONE: Asia/Seoul
+      DAYS_WINDOW: 14
+      MIN_VIEWS: 1000000
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.10"
       - run: pip install -r requirements.txt
-      - name: Create .env from secrets
-        run: |
-          echo "YOUTUBE_API_KEY=${{ secrets.YOUTUBE_API_KEY }}" >> .env
-          echo "OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}" >> .env
-          echo "TIMEZONE=Asia/Seoul" >> .env
-          echo "DAYS_WINDOW=14" >> .env
-          echo "MIN_VIEWS=1000000" >> .env
-          echo "SMTP_HOST=${{ secrets.SMTP_HOST }}" >> .env
-          echo "SMTP_PORT=${{ secrets.SMTP_PORT }}" >> .env
-          echo "SMTP_USER=${{ secrets.SMTP_USER }}" >> .env
-          echo "SMTP_PASS=${{ secrets.SMTP_PASS }}" >> .env
-          echo "REPORT_EMAIL_TO=${{ secrets.REPORT_EMAIL_TO }}" >> .env
       - run: python main.py
-      - uses: actions/upload-artifact@v4
-        with:
-          name: report
-          path: data/outputs/report.md
