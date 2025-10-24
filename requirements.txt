@@ -1,1 +1,3 @@
-# minimal; no extra packages needed for email test
+requests
+feedparser
+pyyaml
