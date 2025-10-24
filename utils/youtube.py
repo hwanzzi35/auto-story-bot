@@ -1,6 +1,6 @@
 import os, re, requests
 from datetime import datetime, timedelta, timezone
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import urlparse, parse_qs, unquote
 from .io import log
 
 YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
@@ -10,6 +10,10 @@ LONGFORM_MIN_SECONDS = int(os.getenv("LONGFORM_MIN_SECONDS", "180"))
 STRICT_HEALTH = (os.getenv("STRICT_HEALTH","1") == "1")
 STRICT_STORY  = (os.getenv("STRICT_STORY","1") == "1")
 STRICT_NK     = (os.getenv("STRICT_NK","0") == "1")
+
+def _require_key():
+    if not YOUTUBE_API_KEY:
+        raise EnvironmentError("YOUTUBE_API_KEY가 환경변수에 없습니다. GitHub Secrets로 등록하고 워크플로에서 $GITHUB_ENV로 export하세요.")
 
 def parse_int(x): 
     try: return int(x)
@@ -41,30 +45,55 @@ def extract_video_id(url: str):
         return None
 
 def resolve_channel_id(channel_url: str):
+    """
+    /channel/UCxxxx... → 그대로
+    /@핸들 → 한글/인코딩 핸들 디코딩 후 search.list로 channelId 획득
+    """
+    _require_key()
     u = urlparse(channel_url)
+    # 1) 명시적 /channel/UC... 인 경우
     if "/channel/" in u.path:
         return u.path.split("/channel/")[1].split("/")[0]
-    # @handle → search by channel
+
+    # 2) /@handle 케이스 (한글 가능)
     handle = None
     if "/@" in u.path:
         handle = u.path.split("/@")[1].split("/")[0]
+        handle = unquote(handle)  # %EB%... → 유니코드 복원
+
     if handle:
         url = "https://www.googleapis.com/youtube/v3/search"
-        params = {"key": YOUTUBE_API_KEY, "part": "snippet", "q": "@"+handle, "type":"channel", "maxResults":1}
-        r = requests.get(url, params=params, timeout=20); r.raise_for_status()
+        params = {
+            "key": YOUTUBE_API_KEY,
+            "part": "snippet",
+            "q": f"@{handle}",
+            "type": "channel",
+            "maxResults": 1
+        }
+        r = requests.get(url, params=params, timeout=20)
+        # 403 등 에러 상황을 로깅하고 None 반환(앵커가 하나 빠져도 전체 파이프라인은 계속)
+        if r.status_code != 200:
+            log(f"[warn] channel handle resolve 실패 ({handle}) status={r.status_code} detail={r.text[:200]}")
+            return None
         items = r.json().get("items",[])
         if items:
             return items[0]["snippet"]["channelId"]
+        log(f"[warn] channel handle 검색 결과 없음: @{handle}")
+    else:
+        log(f"[warn] 채널 URL에서 핸들을 찾지 못했습니다: {channel_url}")
+
     return None
 
 def videos_details(video_ids, parts="snippet,statistics,contentDetails"):
     if not video_ids: return []
+    _require_key()
     url = "https://www.googleapis.com/youtube/v3/videos"
     params = {"key": YOUTUBE_API_KEY, "part": parts, "id": ",".join(video_ids[:50])}
     r = requests.get(url, params=params, timeout=30); r.raise_for_status()
     return r.json().get("items", [])
 
 def search_recent_by_views(query: str, days: int, max_results=50):
+    _require_key()
     published_after = (datetime.utcnow() - timedelta(days=days)).replace(tzinfo=timezone.utc).isoformat()
     url = "https://www.googleapis.com/youtube/v3/search"
     params = {
@@ -85,7 +114,7 @@ def search_recent_by_views(query: str, days: int, max_results=50):
         if sn.get("liveBroadcastContent") and sn.get("liveBroadcastContent")!="none":
             continue
         duration = parse_iso8601_duration(cd.get("duration"))
-        if duration < LONGFORM_MIN_SECONDS:  # 롱폼 필터
+        if duration < LONGFORM_MIN_SECONDS:
             continue
         out.append({
             "id": d.get("id"),
