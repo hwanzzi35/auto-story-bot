@@ -1,0 +1,35 @@
+name: Monthly Senior PDF
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 23 1 * *"  # 매달 1일 KST 08:00 (UTC 23:00 전월 말일)
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - run: |
+          echo "reportlab==3.6.13" >> requirements.txt
+          echo "matplotlib==3.9.0" >> requirements.txt
+          pip install -r requirements.txt
+
+      - name: Run Monthly PDF
+        run: python monthly_report.py
+        env:
+          SMTP_HOST:       ${{ secrets.SMTP_HOST }}
+          SMTP_PORT:       ${{ secrets.SMTP_PORT }}
+          SMTP_USER:       ${{ secrets.SMTP_USER }}
+          SMTP_PASS:       ${{ secrets.SMTP_PASS }}
+          REPORT_EMAIL_TO: ${{ secrets.REPORT_EMAIL_TO }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: monthly-pdf
+          path: data/outputs/monthly_report.pdf
