@@ -1,9 +1,11 @@
 name: Daily Auto Story
 
 on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
   schedule:
     - cron: "0 23 * * *"  # 매일 KST 08:00 (UTC 23:00 전날)
-workflow_dispatch:
 
 jobs:
   run:
