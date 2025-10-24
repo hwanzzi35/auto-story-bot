@@ -10,7 +10,6 @@ from utils.nlp import propose_for_category
 
 REPORT_PATH = OUT_DIR / "report.md"
 
-# 카테고리별 기본 쿼리
 YT_QUERIES = {
     "시니어 건강": "건강 OR 혈당 OR 당뇨 OR 콜레스테롤 OR 무릎 OR 허리 OR 치매 OR 관절 OR 한방 OR 루틴 OR 식단 OR 운동",
     "시니어 북한": "북한 OR 김정은 OR 평양 OR 미사일 OR 제재 OR 탈북 OR 안보",
@@ -77,33 +76,33 @@ def build_report_md(topic_top5:dict, per_category_ideas:list, news_map:dict, anc
         "- **인생스토리 앵커 채널 수:** " + str(len(anchors['story']['channels'])),
         "- **건강 앵커 채널 수:** " + str(len(anchors['health']['channels'])),
         "- **북한 앵커 채널 수:** " + str(len(anchors['nk']['channels'])),
-        "",
-        "### 인생스토리 화이트 키워드",
-        ", ".join(keywords.get("story",{}).get("include",[]) or []),
-        "",
-        "### 건강 화이트 키워드",
-        ", ".join(keywords.get("health",{}).get("include",[]) or []),
-        "",
-        "### 북한 화이트 키워드",
-        ", ".join(keywords.get("nk",{}).get("include",[]) or []),
         ""
     ]
     return "\n".join(lines)
 
+def _require_envs():
+    missing = [k for k in [
+        "YOUTUBE_API_KEY","SMTP_HOST","SMTP_PORT","SMTP_USER","SMTP_PASS","REPORT_EMAIL_TO"
+    ] if not os.getenv(k)]
+    if missing:
+        raise EnvironmentError(f"필수 환경변수 누락: {', '.join(missing)}")
+
 def main():
-    # 0) 설정 로드
+    _require_envs()
+
     anchors = load_yaml("config/anchors.yaml")
     keywords = load_yaml("config/keywords.yaml")
 
-    # 1) 카테고리별 앵커 프로필 만들기
+    # 1) 앵커 프로필
+    from utils.youtube import build_anchor_profile as _bap  # 순환 import 피하려고 지역 import
     anchor_profiles = {}
     for cat in ["health","story","nk"]:
         a = anchors.get(cat, {})
-        prof = build_anchor_profile(a.get("channels",[]), a.get("videos",[]))
+        prof = _bap(a.get("channels",[]), a.get("videos",[]))
         anchor_profiles[cat] = prof
         log(f"[anchor] {cat}: channels={len(prof['channels'])}, kw={len(prof['keywords'])}")
 
-    # 2) 카테고리별 후보 수집 → 앵커링 스코어 → Top5
+    # 2) 후보 수집 → 앵커 스코어 → Top5
     strict_map = {
         "시니어 건강": (os.getenv("STRICT_HEALTH","1")=="1"),
         "시니어 인생스토리": (os.getenv("STRICT_STORY","1")=="1"),
@@ -120,7 +119,7 @@ def main():
         topic_top5[cat] = picked
         log(f"[Top5] {cat}: {len(picked)}개 (strict={strict_map[cat]})")
 
-    # 3) 오늘 제작 추천 (카테고리별)
+    # 3) 오늘 제작 추천
     per_category_ideas = [propose_for_category(cat, topic_top5.get(cat, []))
                           for cat in ["시니어 건강","시니어 북한","시니어 인생스토리"]]
 
