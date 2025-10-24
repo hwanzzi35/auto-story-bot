@@ -15,19 +15,24 @@ jobs:
         with:
           python-version: "3.10"
 
-      - run: |
-          echo "reportlab==3.6.13" >> requirements.txt
-          echo "matplotlib==3.9.0" >> requirements.txt
-          pip install -r requirements.txt
+      - name: Install dependencies (monthly)
+        run: |
+          python -m pip install --upgrade pip
+          pip install reportlab
+          pip install requests
 
-      - name: Run Monthly PDF
+      - name: Run Monthly PDF (with email attachment)
         run: python monthly_report.py
         env:
+          # === Required ===
           SMTP_HOST:       ${{ secrets.SMTP_HOST }}
           SMTP_PORT:       ${{ secrets.SMTP_PORT }}
           SMTP_USER:       ${{ secrets.SMTP_USER }}
           SMTP_PASS:       ${{ secrets.SMTP_PASS }}
           REPORT_EMAIL_TO: ${{ secrets.REPORT_EMAIL_TO }}
+
+          # === Plan B (히스토리 없을 때 실시간 조회) ===
+          YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
 
       - uses: actions/upload-artifact@v4
         with:
