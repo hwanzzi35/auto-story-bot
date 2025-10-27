@@ -3,7 +3,7 @@ from pathlib import Path
 from utils.io import (
     OUT_DIR, now_kst, load_yaml,
     log_event, log_warn, log_error,
-    log_fallback, log_summary, log_pick, log_exclude,
+    log_fallback, log_summary, log_pick
 )
 from utils.emailer import send_email_markdown
 from utils.news import fetch_news_topics
@@ -14,11 +14,11 @@ from utils.nlp import propose_for_category, make_titles
 
 REPORT_PATH = OUT_DIR / "report.md"
 
-# 카테고리별 기본 쿼리(너무 광범위하면 노이즈 증가 → 핵심어 위주)
+# 카테고리별 기본 쿼리
 YT_QUERIES = {
     "시니어 건강": "건강 OR 혈당 OR 당뇨 OR 콜레스테롤 OR 무릎 OR 허리 OR 치매 OR 관절 OR 한방 OR 루틴 OR 식단 OR 운동",
     "시니어 북한": "북한 OR 김정은 OR 평양 OR 미사일 OR 제재 OR 탈북 OR 안보 OR 장마당 OR 군사",
-    "시니어 인생스토리": "사연 OR 썰 OR 반전 OR 가족 OR 시어머니 OR 고부 OR 무시 OR 복수 OR 백만장자 OR 재벌",
+    "시니어 인생스토리": "사연 OR 라디오 OR 오디오북 OR 반전 OR 가족 OR 시어머니 OR 고부 OR 무시 OR 복수 OR 백만장자 OR 재벌",
 }
 
 def _require_envs():
