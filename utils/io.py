@@ -86,3 +86,10 @@ def load_yaml(path: str):
     if not p.exists(): return {}
     with p.open(encoding="utf-8") as fp:
         return yaml.safe_load(fp) or {}
+
+# ----------------------------
+# 하위호환용 래퍼 (기존 모듈들이 from utils.io import log 사용)
+# ----------------------------
+def log(message: str):
+    """Backward-compatible info-level logger."""
+    log_line("INFO", message)
