@@ -1,23 +1,23 @@
 import os, re, requests
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse, parse_qs, unquote
-from .io import log_event, log_warn, log_error, log_exclude
+from .io import log_warn, log_error, log_exclude
 
 YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
 YT_TOP_DAYS = int(os.getenv("YT_TOP_DAYS", "7"))
 
 # 카테고리별 길이 하한/상한(초)
 DURATION_RULES = {
-    "시니어 건강": (1200, 2400),    # 20~40분
-    "시니어 인생스토리": (1800, 7200),  # 30~120분
-    "시니어 북한": (1800, 7200),    # 30~120분
+    "시니어 건강": (1200, 2400),       # 20~40분
+    "시니어 인생스토리": (1800, 7200), # 30~120분
+    "시니어 북한": (1800, 7200),       # 30~120분
 }
 
 def _require_key():
     if not YOUTUBE_API_KEY:
         raise EnvironmentError("YOUTUBE_API_KEY가 환경변수에 없습니다.")
 
-def parse_int(x): 
+def parse_int(x):
     try: return int(x)
     except: return 0
 
@@ -78,9 +78,14 @@ def search_recent_by_views(query: str, days: int, max_results=100):
     published_after = (datetime.utcnow() - timedelta(days=days)).replace(tzinfo=timezone.utc).isoformat()
     url = "https://www.googleapis.com/youtube/v3/search"
     params = {
-        "key": YOUTUBE_API_KEY, "part":"snippet", "q":query, "type":"video",
-        "order":"viewCount", "publishedAfter": published_after,
-        "maxResults": max_results, "relevanceLanguage":"ko",
+        "key": YOUTUBE_API_KEY,
+        "part":"snippet",
+        "q":query,
+        "type":"video",
+        "order":"viewCount",
+        "publishedAfter": published_after,
+        "maxResults": max_results,
+        "relevanceLanguage":"ko",
     }
     r = requests.get(url, params=params, timeout=30)
     if r.status_code != 200:
@@ -98,6 +103,7 @@ def search_recent_by_views(query: str, days: int, max_results=100):
         if sn.get("liveBroadcastContent") and sn.get("liveBroadcastContent")!="none":
             continue
         duration = parse_iso8601_duration(cd.get("duration"))
+        tags = sn.get("tags", []) or []
         out.append({
             "id": d.get("id"),
             "title": sn.get("title"),
@@ -135,7 +141,9 @@ def apply_category_rules(cat:str, videos:list, include:list, exclude:list, must_
     kept = []
     for v in videos:
         title = (v.get("title") or "")
+        tags = v.get("tags") or []
         t_low = title.lower()
+        tags_low = " ".join(tags).lower() if tags else ""
         dur = v.get("durationSec") or 0
 
         # 길이
@@ -149,11 +157,11 @@ def apply_category_rules(cat:str, videos:list, include:list, exclude:list, must_
             log_exclude(cat, "non_korean_title", v); continue
 
         # 블랙리스트 즉시 제외
-        if any(x in t_low for x in exc):
+        if any(x in t_low for x in exc) or any(x in tags_low for x in exc):
             log_exclude(cat, "blacklist_match", v); continue
 
         # 화이트리스트(필수 1+)
-        if inc and not any(x in t_low for x in inc):
+        if inc and not (any(x in t_low for x in inc) or any(x in tags_low for x in inc)):
             log_exclude(cat, "no_whitelist_keyword", v); continue
 
         # 건강: '한방/한의사/약초/차' 중의성 방지 — 의료 핵심어 동반 요구
@@ -161,6 +169,11 @@ def apply_category_rules(cat:str, videos:list, include:list, exclude:list, must_
             if any(tok in t_low for tok in ["한방","한의사","약초"," 탕"," 차 ","경혈","침","뜸","보약","한약"]):
                 if not any(core in t_low for core in health_core_low):
                     log_exclude(cat, "hanbang_without_medical_core", v); continue
+
+        # (옵션) must_phrases: 제목 또는 태그 중 1개 이상 포함 (특히 인생스토리용)
+        if must:
+            if not (any(x in t_low for x in must) or any(x in tags_low for x in must)):
+                log_exclude(cat, "no_must_phrase", v); continue
 
         kept.append(v)
     return kept
