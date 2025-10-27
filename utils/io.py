@@ -43,14 +43,23 @@ def log_event(event: str, **fields):
         with json_file.open("a", encoding="utf-8") as fp:
             fp.write(json.dumps(rec, ensure_ascii=False) + "\n")
     # 콘솔 요약
-    summary_keys = ("cat","reason","id","title","views","dur","step","days","count")
+    summary_keys = ("reason","id","title","views","dur","step","days","count")
     summary = " ".join(f"{k}={fields.get(k)}" for k in summary_keys if fields.get(k) is not None)
     if summary:
         log_line("INFO", f"{event} {summary}")
 
-def log_exclude(cat:str, reason:str, video:dict, step:int=None, extra:dict=None):
+def log_warn(msg:str, **kw):
+    log_line("WARN", msg); log_event("warn", msg=msg, **kw)
+
+def log_error(msg:str, **kw):
+    log_line("ERROR", msg); log_event("error", msg=msg, **kw)
+
+def log_info(msg:str, **kw):
+    log_line("INFO", msg); log_event("info", msg=msg, **kw)
+
+def log_exclude(reason:str, video:dict, step:int=None, extra:dict=None):
     fields = {
-        "cat": cat, "reason": reason,
+        "reason": reason,
         "id": video.get("id"), "title": video.get("title"),
         "views": video.get("views"), "dur": video.get("durationSec"),
         "channel": video.get("channel")
@@ -59,27 +68,6 @@ def log_exclude(cat:str, reason:str, video:dict, step:int=None, extra:dict=None)
     if extra: fields.update(extra)
     log_event("exclude", **fields)
 
-def log_pick(cat:str, video:dict, step:int=None):
-    fields = {
-        "cat": cat, "id": video.get("id"), "title": video.get("title"),
-        "views": video.get("views"), "dur": video.get("durationSec"),
-        "channel": video.get("channel")
-    }
-    if step is not None: fields["step"] = step
-    log_event("pick", **fields)
-
-def log_fallback(cat:str, step:int, days:int, note:str):
-    log_event("fallback", cat=cat, step=step, days=days, note=note)
-
-def log_summary(cat:str, count:int, step:int):
-    log_event("summary", cat=cat, count=count, step=step)
-
-def log_warn(msg:str, **kw):
-    log_line("WARN", msg); log_event("warn", msg=msg, **kw)
-
-def log_error(msg:str, **kw):
-    log_line("ERROR", msg); log_event("error", msg=msg, **kw)
-
 def load_yaml(path: str):
     import yaml
     p = Path(path)
@@ -87,9 +75,6 @@ def load_yaml(path: str):
     with p.open(encoding="utf-8") as fp:
         return yaml.safe_load(fp) or {}
 
-# ----------------------------
-# 하위호환용 래퍼 (기존 모듈들이 from utils.io import log 사용)
-# ----------------------------
+# 하위호환
 def log(message: str):
-    """Backward-compatible info-level logger."""
     log_line("INFO", message)
