@@ -39,17 +39,23 @@ def _load_configs():
         "시니어 북한": [w.lower() for w in (keywords.get("nk",{}).get("exclude",[]) or [])],
         "시니어 인생스토리": [w.lower() for w in (keywords.get("story",{}).get("exclude",[]) or [])],
     }
-    return inc, exc
+    # NEW: must phrases for story
+    must = {
+        "시니어 건강": [],
+        "시니어 북한": [],
+        "시니어 인생스토리": [w.lower() for w in (keywords.get("story",{}).get("must_phrases",[]) or [])],
+    }
+    return inc, exc, must
 
-def _fetch_candidates(cat:str, days:int, query:str, include:list, exclude:list):
+def _fetch_candidates(cat:str, days:int, query:str, include:list, exclude:list, must:list):
     cand = search_recent_by_views(query, days, max_results=100)
-    kept = apply_category_rules(cat, cand, include, exclude)
+    kept = apply_category_rules(cat, cand, include, exclude, must_phrases=must)
     log_event("fetch_candidates", cat=cat, days=days, total=len(cand), kept=len(kept))
     return kept
 
-def _ensure_top5(cat:str, query:str, include:list, exclude:list):
+def _ensure_top5(cat:str, query:str, include:list, exclude:list, must:list):
     """
-    5개 보장 — 기간만 넓힘(조건은 절대 완화하지 않음)
+    5개 보장 — 기간만 넓힘(조건은 완화하지 않음)
     """
     plan = [
         {"step":1, "days":7,  "note":"base"},
@@ -61,7 +67,7 @@ def _ensure_top5(cat:str, query:str, include:list, exclude:list):
     for p in plan:
         used_step = p["step"]
         log_fallback(cat, used_step, p["days"], p["note"])
-        cands = _fetch_candidates(cat, p["days"], query, include, exclude)
+        cands = _fetch_candidates(cat, p["days"], query, include, exclude, must)
 
         seen = set(x["id"] for x in picked)
         for v in cands:
@@ -78,7 +84,7 @@ def build_report_md(topic_top5:dict, per_category_ideas:list, strong_titles:dict
     lines = [
         f"# Daily Auto Story — {kst_now}",
         "",
-        "시니어 3대 니치(건강/북한/인생스토리)를 **길이/키워드/블랙리스트 정책**으로 선별했습니다.",
+        "시니어 3대 니치(건강/북한/인생스토리)를 **길이/키워드/블랙리스트/필수문구(스토리)**로 선별했습니다.",
         "",
         "## A) 카테고리별 유튜브 Top 5 (정책 적용)",
     ]
@@ -141,11 +147,16 @@ def build_report_md(topic_top5:dict, per_category_ideas:list, strong_titles:dict
 
 def main():
     _require_envs()
-    include_map, exclude_map = _load_configs()
+    include_map, exclude_map, must_map = _load_configs()
 
     topic_top5 = {}
     for cat, query in YT_QUERIES.items():
-        top5 = _ensure_top5(cat, query, include_map.get(cat, []), exclude_map.get(cat, []))
+        top5 = _ensure_top5(
+            cat, query,
+            include_map.get(cat, []),
+            exclude_map.get(cat, []),
+            must_map.get(cat, [])
+        )
         topic_top5[cat] = top5
 
     # 강(자극형) 제목·썸네일 5개씩
@@ -164,7 +175,7 @@ def main():
     # 리포트 생성/발송
     md = build_report_md(topic_top5, per_category_ideas, strong_titles, news_map)
     Path(REPORT_PATH).write_text(md, encoding="utf-8")
-    send_email_markdown(md, "✅ Daily Auto Story: 정책적용 Top5 + 강(자극형) 제목/썸네일 5개")
+    send_email_markdown(md, "✅ Daily Auto Story: 정책적용 Top5 (스토리=오디오북/라디오사연 계열 강제)")
 
 if __name__ == "__main__":
     main()
