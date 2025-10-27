@@ -101,6 +101,7 @@ def search_recent_by_views(query: str, days: int, max_results=100):
         out.append({
             "id": d.get("id"),
             "title": sn.get("title"),
+            "tags": tags,                       # ← 태그 수집
             "channel": sn.get("channelTitle"),
             "channelId": sn.get("channelId"),
             "publishedAt": sn.get("publishedAt"),
@@ -113,10 +114,14 @@ def search_recent_by_views(query: str, days: int, max_results=100):
 def _contains_korean(text:str)->bool:
     return bool(re.search(r"[가-힣]", text or ""))
 
-def apply_category_rules(cat:str, videos:list, include:list, exclude:list):
-    """길이/한글/블랙리스트/화이트리스트(필수1+) + 건강 ‘한방’ 동시등장 규칙. 모두 로그 남김."""
+def apply_category_rules(cat:str, videos:list, include:list, exclude:list, must_phrases:list=None):
+    """
+    길이/한글/블랙리스트/화이트리스트(필수1+) + (옵션) must_phrases(제목 또는 태그 중 1+) 검사.
+    모든 실패는 log_exclude로 사유 기록.
+    """
     inc = [w.lower() for w in (include or [])]
     exc = [w.lower() for w in (exclude or [])]
+    must = [w.lower() for w in (must_phrases or [])]
     dmin, dmax = DURATION_RULES.get(cat, (0, 10**9))
 
     # 건강 핵심어(한방 중의성 방지용 co-occurrence)
