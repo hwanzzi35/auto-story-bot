@@ -1,6 +1,6 @@
 import os, smtplib
 from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
+from email.mime_text import MIMEText
 
 def _smtp_env():
     need = ["SMTP_HOST","SMTP_PORT","SMTP_USER","SMTP_PASS","REPORT_EMAIL_TO"]
@@ -22,11 +22,13 @@ def send_email_markdown(markdown_text: str, subject: str):
     msg["Subject"] = subject
     msg["From"] = user
     msg["To"] = to_addr
-
-    # 기본은 마크다운 텍스트 그대로(간단)
     msg.attach(MIMEText(markdown_text, "plain", "utf-8"))
 
     with smtplib.SMTP(host, port) as s:
-        s.starttls()
+        try:
+            s.starttls()
+        except smtplib.SMTPException:
+            # TLS 미지원 서버일 경우 무시
+            pass
         s.login(user, pwd)
         s.sendmail(user, [to_addr], msg.as_string())
