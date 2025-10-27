@@ -81,9 +81,9 @@ def _contains_korean(text:str)->bool:
 
 def filter_story(videos: list, must_phrases: list, include_words: list, exclude_words: list, step:int):
     """길이/한글/블랙/필수문구 검사. 제외 사유 전부 로깅."""
-    must = [w.lower() for w in must_phrases]
-    inc  = [w.lower() for w in include_words]
-    exc  = [w.lower() for w in exclude_words]
+    must = [w.lower() for w in (must_phrases or [])]
+    inc  = [w.lower() for w in (include_words or [])]
+    exc  = [w.lower() for w in (exclude_words or [])]
 
     kept = []
     for v in videos:
