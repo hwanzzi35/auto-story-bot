@@ -1,6 +1,6 @@
 import os
 from pathlib import Path
-from utils.io import OUT_DIR, now_kst, load_yaml, log_info
+from utils.io import OUT_DIR, now_kst, load_yaml, log_fallback, log_summary, log_pick
 from utils.emailer import send_email_markdown
 from utils.youtube import search_story_candidates, filter_story
 from utils.nlp import extract_top_keywords, make_strong_titles_from_keywords
@@ -16,7 +16,7 @@ def _require_envs():
 def load_story_keywords():
     cfg = load_yaml("config/keywords.yaml").get("story", {})
     return (
-        [w.lower() for w in (cfg.get("must_phrases") or [])],
+        [w for w in (cfg.get("must_phrases") or [])],
         [w.lower() for w in (cfg.get("include") or [])],
         [w.lower() for w in (cfg.get("exclude") or [])],
     )
@@ -62,32 +62,33 @@ def main():
     _require_envs()
     must, include, exclude = load_story_keywords()
 
-    # 1) 후보 수집(7일) → 부족 시 14일→21일로 기간만 확장 (조건 완화 없음)
-    plan = [(7,"7일"), (14,"14일"), (21,"21일")]
+    # 후보 수집 — 기간만 7→14→21→28→35일 확장 (조건 완화 없음), 각 창에서 최대 250개(5페이지)
+    plan = [(7,"7일"), (14,"14일"), (21,"21일"), (28,"28일"), (35,"35일")]
     picked = []
     window_note = "7일"
-    base_query = "사연 OR 라디오 OR 오디오북 OR 반전 OR 가족 OR 시어머니 OR 고부 OR 무시 OR 복수 OR 백만장자 OR 재벌"
+    # 보조 쿼리: 사연/가족/고부/무시/복수 등 — must는 search에도 포함됨
+    extra_query = "사연 OR 가족 OR 시어머니 OR 고부 OR 무시 OR 복수 OR 반전 OR 재벌 OR 백만장자"
     seen = set()
 
     for days, note in plan:
         window_note = note
-        cand = search_story_candidates(base_query, days, max_results=100)
+        log_fallback(cat="시니어 인생스토리", step=days, days=days, note="fetch_window_paged")
+        cand = search_story_candidates(must_phrases=must, days=days, base_extra_query=extra_query, max_pages=5)
         kept = filter_story(cand, must, include, exclude, step=days)
         for v in kept:
             if v["id"] in seen: continue
-            picked.append(v); seen.add(v["id"])
+            picked.append(v); seen.add(v["id"]); log_pick(cat="시니어 인생스토리", video=v, step=days)
             if len(picked) >= 5: break
         if len(picked) >= 5: break
 
     top5 = picked[:5]
+    log_summary(cat="시니어 인생스토리", count=len(top5), step=None)
 
-    # 2) 키워드 요약 + 신규 제목 5개(표절 금지)
     titles = [v["title"] for v in top5]
     tags = [v.get("tags",[]) for v in top5]
     kw_summary = extract_top_keywords(titles, tags, topk=12)
     new_titles = make_strong_titles_from_keywords(kw_summary, n=5)
 
-    # 3) 메일 본문 작성 및 발송
     md = build_email_md(top5, kw_summary, new_titles, window_note)
     Path(REPORT_PATH).write_text(md, encoding="utf-8")
     send_email_markdown(md, "✅ 시니어 인생스토리: Top5 & 신규 강제목 5개")
