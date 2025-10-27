@@ -1,27 +1,32 @@
 import os, smtplib
+from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
-from email.header import Header
 
-def send_email_markdown(markdown_body: str, subject: str):
-    SMTP_HOST = os.getenv("SMTP_HOST")
-    SMTP_PORT = os.getenv("SMTP_PORT")
-    SMTP_USER = os.getenv("SMTP_USER")
-    SMTP_PASS = os.getenv("SMTP_PASS")
-    REPORT_EMAIL_TO = os.getenv("REPORT_EMAIL_TO")
-    missing = [k for k,v in {
-        "SMTP_HOST": SMTP_HOST, "SMTP_PORT": SMTP_PORT,
-        "SMTP_USER": SMTP_USER, "SMTP_PASS": SMTP_PASS,
-        "REPORT_EMAIL_TO": REPORT_EMAIL_TO
-    }.items() if not v]
-    if missing:
-        raise EnvironmentError(f"누락된 환경변수: {', '.join(missing)}")
+def _smtp_env():
+    need = ["SMTP_HOST","SMTP_PORT","SMTP_USER","SMTP_PASS","REPORT_EMAIL_TO"]
+    miss = [k for k in need if not os.getenv(k)]
+    if miss:
+        raise EnvironmentError("SMTP 환경변수 누락: " + ", ".join(miss))
+    return (
+        os.getenv("SMTP_HOST"),
+        int(os.getenv("SMTP_PORT")),
+        os.getenv("SMTP_USER"),
+        os.getenv("SMTP_PASS"),
+        os.getenv("REPORT_EMAIL_TO"),
+    )
 
-    msg = MIMEText(markdown_body, _charset="utf-8")
-    msg["Subject"] = Header(subject, "utf-8")
-    msg["From"]    = SMTP_USER
-    msg["To"]      = REPORT_EMAIL_TO
+def send_email_markdown(markdown_text: str, subject: str):
+    host, port, user, pwd, to_addr = _smtp_env()
 
-    with smtplib.SMTP(SMTP_HOST, int(SMTP_PORT)) as s:
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = subject
+    msg["From"] = user
+    msg["To"] = to_addr
+
+    # 기본은 마크다운 텍스트 그대로(간단)
+    msg.attach(MIMEText(markdown_text, "plain", "utf-8"))
+
+    with smtplib.SMTP(host, port) as s:
         s.starttls()
-        s.login(SMTP_USER, SMTP_PASS)
-        s.sendmail(SMTP_USER, [REPORT_EMAIL_TO], msg.as_string())
+        s.login(user, pwd)
+        s.sendmail(user, [to_addr], msg.as_string())
