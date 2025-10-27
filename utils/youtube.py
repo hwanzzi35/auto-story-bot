@@ -9,6 +9,10 @@ YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
 DURATION_MIN = 1800
 DURATION_MAX = 7200
 
+NEWS_CHANNEL_BLACKLIST = [
+    "JTBC", "MBC", "SBS", "YTN", "연합뉴스", "MBN", "TV조선", "채널A", "KBS"
+]
+
 def _require_key():
     if not YOUTUBE_API_KEY:
         raise EnvironmentError("YOUTUBE_API_KEY 환경변수 없음")
@@ -38,7 +42,7 @@ def videos_details(video_ids, parts="snippet,statistics,contentDetails"):
     return r.json().get("items", [])
 
 def _normalize(s: str) -> str:
-    """#, 공백, 괄호/기호 제거 후 소문자. (라디오 사연 == 라디오사연 == #라디오사연)"""
+    """기호/공백 제거하여 lower 변환 → 키워드 매칭 안정화"""
     if not s: return ""
     s = s.lower()
     s = re.sub(r"[#\[\]\(\)<>【】『』〈〉\-–—_|@:~·•….,!?\"'`/\\]", " ", s)
@@ -46,7 +50,6 @@ def _normalize(s: str) -> str:
     return s
 
 def _build_must_regex(must_phrases: list[str]):
-    """필수 문구를 '공백 무시' 규칙으로 매칭할 정규식 세트 구성"""
     regs = []
     for p in (must_phrases or []):
         p_norm = _normalize(p)
@@ -64,31 +67,22 @@ def _match_must(title: str, tags: list[str], must_regs):
 
 def search_story_candidates(must_phrases: list[str], days: int, base_extra_query: str = "", max_pages: int = 5):
     """
-    검색 결과를 pages 만큼 모아서 candidates 반환.
-    - 검색어: (must OR ...) + base_extra_query
-    - 정렬: viewCount
-    - 기간: publishedAfter = now- days
-    - 길이: videoDuration=long (20분 이상, 이후 30~120분으로 재필터)
+    Must OR Filtering + Pagination
     """
     _require_key()
     published_after = (datetime.utcnow() - timedelta(days=days)).replace(tzinfo=timezone.utc).isoformat()
 
-    # 필수문구 OR 묶음 (큰따옴표로 정확도 향상 + 공백/기호 변형은 후처리로 커버)
     or_terms = [f"\"{p}\"" for p in (must_phrases or []) if p]
     must_block = "(" + " OR ".join(or_terms) + ")" if or_terms else ""
     query = f"{must_block} {base_extra_query}".strip()
 
     url = "https://www.googleapis.com/youtube/v3/search"
     params = {
-        "key": YOUTUBE_API_KEY,
-        "part": "snippet",
-        "q": query,
-        "type": "video",
-        "order": "viewCount",
-        "publishedAfter": published_after,
-        "maxResults": 50,              # 페이지 당 최대
+        "key": YOUTUBE_API_KEY, "part": "snippet", "q": query,
+        "type": "video", "order": "viewCount",
+        "publishedAfter": published_after, "maxResults": 50,
         "relevanceLanguage": "ko",
-        "videoDuration": "long",       # 20분 이상
+        "videoDuration": "long",  # 20분 이상
         "safeSearch": "none",
     }
 
@@ -108,10 +102,8 @@ def search_story_candidates(must_phrases: list[str], days: int, base_extra_query
             break
 
     ids = [it.get("id",{}).get("videoId") for it in items if it.get("id",{}).get("videoId")]
-    ids = list(dict.fromkeys(ids))  # 중복 제거, 순서 유지
-    if not ids: return []
+    ids = list(dict.fromkeys(ids))
 
-    # 50개씩 나눠서 details 조회
     details = []
     for i in range(0, len(ids), 50):
         details.extend(videos_details(ids[i:i+50]))
@@ -121,18 +113,18 @@ def search_story_candidates(must_phrases: list[str], days: int, base_extra_query
         sn = d.get("snippet",{}) or {}
         st = d.get("statistics",{}) or {}
         cd = d.get("contentDetails",{}) or {}
-        if sn.get("liveBroadcastContent") and sn.get("liveBroadcastContent")!="none":
-            continue
         duration = parse_iso8601_duration(cd.get("duration"))
+
         out.append({
             "id": d.get("id"),
             "title": sn.get("title"),
-            "tags": sn.get("tags", []) or [],
+            "tags": sn.get("tags",[]) or [],
             "channel": sn.get("channelTitle"),
             "publishedAt": sn.get("publishedAt"),
             "views": parse_int(st.get("viewCount")),
-            "durationSec": duration
+            "durationSec": duration,
         })
+
     out.sort(key=lambda x: x["views"], reverse=True)
     return out
 
@@ -140,18 +132,14 @@ def _contains_korean(text:str)->bool:
     return bool(re.search(r"[가-힣]", text or ""))
 
 def filter_story(videos: list, must_phrases: list, include_words: list, exclude_words: list, step:int):
-    """
-    길이/한글/블랙/필수문구 검사. 제외 사유 전부 로깅.
-    - 필수문구는 '공백/기호 무시' 정규화로 매칭
-    """
     must_regs = _build_must_regex(must_phrases or [])
-    inc  = [w.lower() for w in (include_words or [])]
-    exc  = [w.lower() for w in (exclude_words or [])]
+    exc = [w.lower() for w in (exclude_words or [])]
 
     kept = []
     for v in videos:
         title = (v.get("title") or "")
         tags = v.get("tags") or []
+        channel = (v.get("channel") or "")
         t_low = title.lower()
         tags_low = " ".join(tags).lower()
         dur = v.get("durationSec") or 0
@@ -160,14 +148,21 @@ def filter_story(videos: list, must_phrases: list, include_words: list, exclude_
             log_exclude("duration_short", v, step=step); continue
         if dur > DURATION_MAX:
             log_exclude("duration_long", v, step=step); continue
+
         if not _contains_korean(title):
             log_exclude("non_korean_title", v, step=step); continue
+
         if any(x in t_low for x in exc) or any(x in tags_low for x in exc):
             log_exclude("blacklist_match", v, step=step); continue
 
-        # 필수 문구: 제목 또는 태그에 1개 이상 (정규화 매칭)
+        # 뉴스/시사 채널 제거
+        if any(n.lower() in channel.lower() for n in NEWS_CHANNEL_BLACKLIST):
+            log_exclude("news_channel", v, step=step); continue
+
+        # 필수문구
         if must_regs and not _match_must(title, tags, must_regs):
             log_exclude("no_must_phrase", v, step=step); continue
 
         kept.append(v)
+
     return kept
